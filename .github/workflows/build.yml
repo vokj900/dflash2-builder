@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2019    # ← 必须是这个，别改！
+    runs-on: windows-2022    # ← 必须是这个，别改！
     steps:
       - name: Checkout llama.cpp PR #27342
         uses: actions/checkout@v4
@@ -21,7 +21,7 @@ jobs:
       - name: Install CUDA
         uses: Jimver/cuda-toolkit@v0.2.15
         with:
-          cuda: '12.2.0'     # ← 必须是这个，别改！
+          cuda: '12.8.0'     # ← 必须是这个，别改！
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 

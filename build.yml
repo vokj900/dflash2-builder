@@ -1,0 +1,43 @@
+name: Build llama.cpp DFlash2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2019
+    steps:
+      - name: Checkout llama.cpp PR #27342
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          fetch-depth: 0
+
+      - name: Switch to DFlash2 PR branch
+        run: |
+          git fetch origin pull/27342/head:pr-27342
+          git switch pr-27342
+
+      - name: Install CUDA
+        uses: Jimver/cuda-toolkit@v0.2.15
+        with:
+          cuda: '12.2.0'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+
+      - name: Build
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DGGML_CUDA=ON -DLLAMA_BUILD_SERVER=ON -DBUILD_SHARED_LIBS=ON
+          cmake --build . --config Release -j ${{ env.NUMBER_OF_PROCESSORS }}
+
+      - name: Pack
+        # 修复点1：使用 Compress-Archive 代替 7z
+        run: Compress-Archive -Path $env:GITHUB_WORKSPACE/build/bin/Release/* -DestinationPath $env:GITHUB_WORKSPACE/llama-dflash2.zip
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          path: llama-dflash2.zip
+          name: llama-dflash2-win64-cuda12.zip

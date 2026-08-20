@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2022    # ← 换 2022，配 CUDA 12.8.1
+    runs-on: windows-2022
     steps:
       - name: Checkout llama.cpp PR #27342
         uses: actions/checkout@v4
@@ -18,10 +18,10 @@ jobs:
           git fetch origin pull/27342/head:pr-27342
           git switch pr-27342
 
-      - name: Install CUDA 12.8.1
+      - name: Install CUDA 12.4
         uses: Jimver/cuda-toolkit@v0.2.15
         with:
-          cuda: '12.8.1'     # ← 12.8.1 存在，12.8.0 不存在
+          cuda: '12.4.0'
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 

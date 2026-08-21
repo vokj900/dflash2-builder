@@ -25,12 +25,12 @@ jobs:
           git fetch origin 5ecbe1ac1
           git checkout 5ecbe1ac1
 
-      # 2. 安装 CUDA 12.8.1
+      # 2. 安装 CUDA 12.8.0
       - name: Setup CUDA
-        uses: Jimver/cuda-toolkit@v0.2.21
+        uses: Jimver/cuda-toolkit@v0.2.23
         id: cuda-toolkit
         with:
-          cuda: "12.8.1"
+          cuda: "12.8.0"
           method: network
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
@@ -135,7 +135,7 @@ jobs:
           name: llama-server DFlash2 (commit 5ecbe1ac1)
           body: |
             llama-server.exe built from ggml-org/llama.cpp PR #27342 (commit 5ecbe1ac1)
-            - CUDA 12.8.1, sm_120 (RTX 5060 Ti / Blackwell)
+            - CUDA 12.8.0, sm_120 (RTX 5060 Ti / Blackwell)
             - DFlash2 speculative decoding for Qwen3.8-27B
             - Static /MT linking, Windows x64
           files: dist/*

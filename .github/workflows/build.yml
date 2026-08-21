@@ -27,24 +27,17 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
-      # 1a. 拉取 ggml-org/llama.cpp PR #27342 head
-      - name: Checkout ggml-org/llama.cpp PR #27342
+      # 1. 检出 ggml-org/llama.cpp @ 5ecbe1ac1（PR #27342 验证过的 DFlash2 提交）
+      - name: Checkout ggml-org/llama.cpp @ 5ecbe1ac1
         uses: actions/checkout@v4
         with:
           repository: ggml-org/llama.cpp
-          ref: refs/pull/27342/head
+          ref: 5ecbe1ac1
+          fetch-depth: 0
           submodules: recursive
           path: src
 
-      # 1b. 切到验证过的 commit 5ecbe1ac1（support DFlash2）
-      - name: Checkout verified commit 5ecbe1ac1
-        shell: cmd
-        run: |
-          cd src
-          git fetch origin 5ecbe1ac1
-          git checkout 5ecbe1ac1
-
-      # 2. 编译（照搬你成功工作流的思路，源码仍是 ggml-org PR #27342 @ 5ecbe1ac1）
+      # 2. 编译（照搬你成功工作流的思路）
       - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
         shell: cmd
         run: |
@@ -151,4 +144,45 @@ jobs:
           echo === 产物列表 ===
           dir out\
 
-      #
+      # 3. 上传 artifact
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-server-dflash2-rtx5060ti
+          path: src/out/
+          retention-days: 7
+
+      # 4. 下载 artifact 准备打包发布
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: llama-server-dflash2-rtx5060ti
+          path: release-files
+
+      # 5. 打包为 zip
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          $zipName = "llama-server-dflash2-rtx5060ti-cuda12.8-${{ inputs.tag_name }}.zip"
+          Compress-Archive -Path "release-files\*" -DestinationPath $zipName -Force
+          echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
+
+      # 6. 自动发布到 GitHub Releases
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: llama.cpp DFlash2 ${{ inputs.tag_name }} — RTX 5060 Ti
+          body: |
+            ## 🚀 llama.cpp DFlash2 Build for RTX 5060 Ti (Blackwell)
+
+            基于 ggml-org/llama.cpp PR #27342 @ commit 5ecbe1ac1（support DFlash2）编译。
+
+            ### ✨ 核心特性
+            - **DFlash2 投机解码**：`--spec-type draft-dflash`
+            - **CUDA 12.8 + sm_120**：Blackwell 架构原生编译
+            - **开箱即用**：内置所有依赖 DLL
+          files: |
+            ${{ env.ZIP_PATH }}
+            release-files/llama-server.exe
+            release-files/*.dll

@@ -18,6 +18,7 @@ jobs:
           path: src
 
       # 1b. 切到社区验证通过的 commit 5ecbe1ac1
+      - name: Checkout verified commit 5ecbe1ac1
         shell: cmd
         run: |
           cd src

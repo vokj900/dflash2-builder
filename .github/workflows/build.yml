@@ -18,7 +18,6 @@ jobs:
           path: src
 
       # 1b. 切到社区验证通过的 commit 5ecbe1ac1
-      - name: Checkout verified commit 5ecbe1ac1
         shell: cmd
         run: |
           cd src
@@ -43,7 +42,7 @@ jobs:
           dir "%CUDA_PATH%\bin\nvcc.exe"
           "%CUDA_PATH%\bin\nvcc.exe" --version
 
-      # 4. 配置 CMake（修复 CRT + rc.exe）
+      # 4. 配置 CMake
       - name: Configure CMake
         shell: cmd
         run: |
@@ -51,16 +50,13 @@ jobs:
           SET "MSVC_PATH=%VS_PATH%\VC\Tools\MSVC"
           FOR /F "tokens=*" %%i IN ('DIR /B /AD /O-N "%MSVC_PATH%"') DO SET "MSVC_VERSION=%%i"
           SET "CL_EXE=%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\cl.exe"
-          SET "RC_EXE=%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\rc.exe"
 
           ECHO Using C compiler: %CL_EXE%
-          ECHO Using RC: %RC_EXE%
 
           cmake -S src -B build ^
             -G Ninja ^
             -DCMAKE_C_COMPILER="%CL_EXE%" ^
             -DCMAKE_CXX_COMPILER="%CL_EXE%" ^
-            -DCMAKE_RC_COMPILER="%RC_EXE%" ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DGGML_CUDA=ON ^
             -DGGML_CUDA_ARCHITECTURES="120" ^

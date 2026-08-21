@@ -27,16 +27,16 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
-      # 1. 拉取 aetherbird/llama.cpp（bailingmoe3-support 分支，含 MTP/DFlash2 改动）
-      - name: Checkout aetherbird/llama.cpp (bailingmoe3-support)
+      # 1. 拉取官方 llama.cpp + 切换到 PR #27342（含 DFlash2 支持）
+      - name: Checkout llama.cpp PR #27342
         uses: actions/checkout@v4
         with:
-          repository: aetherbird/llama.cpp
-          ref: bailingmoe3-support
+          repository: ggml-org/llama.cpp
+          ref: refs/pull/27342/head
           submodules: recursive
           path: src
 
-      # 2. 编译（你贴的代码，一个字没动）
+      # 2. 编译
       - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
         shell: cmd
         run: |
@@ -72,8 +72,10 @@ jobs:
           where cc.exe && (echo ❌ cc.exe 仍存在 && exit /b 1) || echo ✅ MinGW 屏蔽成功
 
           echo ================================================================
-          echo [3/6] 安装依赖 + 验证 CUDA
+          echo [3/6] 安装依赖 + 设置 CUDA 路径
           echo ================================================================
+          REM ★ 硬编码 CUDA 路径，不依赖 action 注入的环境变量 ★
+          set "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8"
           echo CUDA_PATH: %CUDA_PATH%
           set "CUDA_BIN=%CUDA_PATH%\bin"
           if not exist "%CUDA_BIN%\nvcc.exe" (
@@ -171,14 +173,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag_name }}
-          name: llama.cpp DFlash2 ${{ inputs.tag_name }} — RTX 5060 Ti
+          name: llama.cpp DFlash2 (PR #27342) ${{ inputs.tag_name }} — RTX 5060 Ti
           body: |
             ## 🚀 llama.cpp DFlash2 Build for RTX 5060 Ti (Blackwell)
 
-            基于 [aetherbird/llama.cpp](https://github.com/aetherbird/llama.cpp/tree/bailingmoe3-support) `bailingmoe3-support` 分支编译。
+            基于 [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) **PR #27342** 编译，包含 DFlash2 投机解码支持。
 
             ### ✨ 核心特性
-            - **DFlash2 / MTP 投机解码**：支持 `--spec-draft-model` + `--spec-type draft-dflash`
+            - **DFlash2 投机解码**：支持 `--spec-type draft-dflash --spec-draft-n-max 7`
             - **CUDA 12.8 + sm_120**：Blackwell 架构原生编译
             - **开箱即用**：内置所有依赖 DLL
           files: |

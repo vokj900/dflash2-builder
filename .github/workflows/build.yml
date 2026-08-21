@@ -1,4 +1,4 @@
-name: Build llama.cpp DFlash2 for RTX 5060 Ti (Blackwell)
+name: Build llama.cpp DFlash2 for RTX 5060 Ti
 
 on:
   workflow_dispatch:
@@ -7,54 +7,134 @@ jobs:
   build:
     runs-on: windows-2022
     steps:
-      - name: Checkout llama.cpp PR #27342
-        uses: actions/checkout@v6
+      # 0. 安装 CUDA 12.8.1（和你成功的工作流完全一致）
+      - name: Install CUDA Toolkit 12.8.1
+        uses: Jimver/cuda-toolkit@v0.2.36
         with:
-          repository: ggml-org/llama.cpp
-          fetch-depth: 0
-
-      - name: Switch to DFlash2 PR branch
-        shell: bash
-        run: |
-          git fetch origin pull/27342/head:pr-27342
-          git switch pr-27342
-
-      - name: Install CUDA 12.8.0
-        uses: Jimver/cuda-toolkit@v0.2.29
-        with:
-          cuda: '12.8.0'
+          cuda: '12.8.1'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
-      - name: Install Ninja
-        run: choco install ninja
+      # 1. 拉取 aetherbird/llama.cpp（bailingmoe3-support 分支，含 MTP/DFlash2 改动）
+      - name: Checkout aetherbird/llama.cpp (bailingmoe3-support)
+        uses: actions/checkout@v4
+        with:
+          repository: aetherbird/llama.cpp
+          ref: bailingmoe3-support
+          submodules: recursive
+          path: src
 
-      - name: Build
+      # 2. 编译（完全复制你成功工作流的步骤，一个字不改）
+      - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
         shell: cmd
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
+          echo ================================================================
+          echo [1/6] 加载 MSVC x64 环境
+          echo ================================================================
+          for /f "delims=" %%i in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set "VS_PATH=%%i"
+          set "VCVARS=%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat"
+          if not exist "%VCVARS%" (echo ❌ 未找到 %VCVARS% && exit /b 1)
+          call "%VCVARS%"
+          if %ERRORLEVEL% neq 0 (echo ❌ MSVC 环境加载失败 && exit /b 1)
+          where cl.exe || (echo ❌ cl.exe 未加载 && exit /b 1)
+          for /f "delims=" %%i in ('where cl.exe') do set "CL_PATH=%%i"
+          echo ✅ MSVC cl.exe: %CL_PATH%
+
+          echo ================================================================
+          echo [2/6] 从 PATH 中剔除预装 MinGW
+          echo ================================================================
+          set "PATH=%PATH:C:\mingw64\bin;=%"
+          set "PATH=%PATH:;C:\mingw64\bin=%"
+          set "PATH=%PATH:C:\mingw64\bin=%"
+          set "PATH=%PATH:C:\msys64\mingw64\bin;=%"
+          set "PATH=%PATH:;C:\msys64\mingw64\bin=%"
+          set "PATH=%PATH:C:\msys64\mingw64\bin=%"
+          set "PATH=%PATH:C:\msys64\ucrt64\bin;=%"
+          set "PATH=%PATH:;C:\msys64\ucrt64\bin=%"
+          set "PATH=%PATH:C:\msys64\ucrt64\bin=%"
+          where cc.exe && (
+            for %%i in (cc.exe gcc.exe g++.exe) do (
+              for /f "delims=" %%j in ('where %%i 2^>nul') do del /f /q "%%j" || echo 删除 %%j 失败
+            )
+          ) || echo ✅ cc.exe 已在 PATH 中消失
+          where cc.exe && (echo ❌ cc.exe 仍存在 && exit /b 1) || echo ✅ MinGW 屏蔽成功
+
+          echo ================================================================
+          echo [3/6] 安装依赖 + 验证 CUDA
+          echo ================================================================
+          echo CUDA_PATH: %CUDA_PATH%
+          set "CUDA_BIN=%CUDA_PATH%\bin"
+          if not exist "%CUDA_BIN%\nvcc.exe" (
+            echo ❌ %CUDA_BIN%\nvcc.exe 不存在！
+            dir "%CUDA_BIN%"
+            exit /b 1
+          )
+          echo ✅ CUDA bin 目录：%CUDA_BIN%
+          set "PATH=%CUDA_BIN%;%PATH%"
+
+          choco install openssl ninja -y --no-progress
+          where ninja || (echo ❌ ninja 未安装 && exit /b 1)
+          where nvcc || (echo ❌ nvcc 仍未找到 && exit /b 1)
+          nvcc --version
+          echo ✅ 依赖就绪
+
+          echo ================================================================
+          echo [4/6] CMake 配置（强制使用 MSVC，Blackwell sm_120）
+          echo ================================================================
+          cd src
+          if exist build rmdir /s /q build
+          mkdir build
           cmake -S . -B build -G "Ninja Multi-Config" ^
-            -DLLAMA_BUILD_SERVER=ON ^
-            -DGGML_NATIVE=OFF ^
-            -DGGML_BACKEND_DL=ON ^
+            -DCMAKE_C_COMPILER="%CL_PATH%" ^
+            -DCMAKE_CXX_COMPILER="%CL_PATH%" ^
+            -DCMAKE_CUDA_COMPILER="%CUDA_BIN%\nvcc.exe" ^
+            -DCMAKE_C_COMPILER_WORKS=ON ^
+            -DCMAKE_CXX_COMPILER_WORKS=ON ^
             -DGGML_CUDA=ON ^
-            -DGGML_CUDA_CUB_3DOT2=ON ^
-            -DGGML_CUDA_FORCE_MMQ=OFF ^
-            -DCMAKE_CUDA_ARCHITECTURES=120 ^
-            -DBUILD_SHARED_LIBS=ON
+            -DCMAKE_CUDA_ARCHITECTURES="120" ^
+            -DGGML_CUDA_FA_ALL_QUANTS=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DLLAMA_BUILD_SERVER=ON ^
+            -DLLAMA_BUILD_TOOLS=ON ^
+            -DLLAMA_BUILD_BORINGSSL=OFF ^
+            -DOPENSSL_USE_STATIC_LIBS=ON ^
+            -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL" ^
+            -DCMAKE_C_FLAGS="/MT" ^
+            -DCMAKE_CXX_FLAGS="/MT" ^
+            -DCMAKE_VERBOSE_MAKEFILE=ON
+          if %ERRORLEVEL% neq 0 (echo ❌ CMake 配置失败 && exit /b 1)
+          echo ✅ CMake 配置完成
+
+          echo ================================================================
+          echo [5/6] 编译 llama-server
+          echo ================================================================
           set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
-          cmake --build build --config Release -j %NINJA_JOBS%
+          cmake --build build --config Release -j %NINJA_JOBS% -t llama-server
+          if %ERRORLEVEL% neq 0 (echo ❌ 编译失败 && exit /b 1)
+          echo 🎉🎉🎉 编译成功！
 
-      - name: Pack
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path $env:GITHUB_WORKSPACE/out
-          Get-ChildItem -Path $env:GITHUB_WORKSPACE/build -Recurse -Include *.exe,*.dll |
-            Copy-Item -Destination $env:GITHUB_WORKSPACE/out -Force
-          Compress-Archive -Path $env:GITHUB_WORKSPACE/out/* -DestinationPath $env:GITHUB_WORKSPACE/llama-dflash2.zip
+          echo ================================================================
+          echo [6/6] 收集产物到 out 目录
+          echo ================================================================
+          mkdir out
+          copy build\bin\Release\llama-server.exe out\
+          copy build\bin\Release\*.dll out\
+          copy "%CUDA_PATH%\bin\cudart64_*.dll" out\
+          copy "%CUDA_PATH%\bin\cublas64_*.dll" out\
+          copy "%CUDA_PATH%\bin\cublasLt64_*.dll" out\
+          copy "C:\Windows\System32\vcruntime140.dll" out\
+          copy "C:\Windows\System32\vcruntime140_1.dll" out\
+          copy "C:\Windows\System32\msvcp140.dll" out\
+          copy "C:\Windows\System32\msvcp140_1.dll" out\
+          copy "C:\Windows\System32\msvcp140_2.dll" out\
+          copy "C:\Windows\System32\concrt140.dll" out\
+          echo === 产物列表 ===
+          dir out\
 
-      - name: Upload
+      # 3. 上传 artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: llama-dflash2-win64-cuda12.8-rtx5060ti
-          path: llama-dflash2.zip
+          name: llama-server-dflash2-rtx5060ti
+          path: src/out/
+          retention-days: 7

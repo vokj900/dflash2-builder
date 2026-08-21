@@ -43,7 +43,7 @@ jobs:
           dir "%CUDA_PATH%\bin\nvcc.exe"
           "%CUDA_PATH%\bin\nvcc.exe" --version
 
-      # 4. 配置 CMake（修复空格路径引号问题）
+      # 4. 配置 CMake（修复 CRT + rc.exe）
       - name: Configure CMake
         shell: cmd
         run: |
@@ -51,14 +51,16 @@ jobs:
           SET "MSVC_PATH=%VS_PATH%\VC\Tools\MSVC"
           FOR /F "tokens=*" %%i IN ('DIR /B /AD /O-N "%MSVC_PATH%"') DO SET "MSVC_VERSION=%%i"
           SET "CL_EXE=%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\cl.exe"
+          SET "RC_EXE=%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\rc.exe"
 
           ECHO Using C compiler: %CL_EXE%
-          ECHO Using CXX compiler: %CL_EXE%
+          ECHO Using RC: %RC_EXE%
 
           cmake -S src -B build ^
             -G Ninja ^
             -DCMAKE_C_COMPILER="%CL_EXE%" ^
             -DCMAKE_CXX_COMPILER="%CL_EXE%" ^
+            -DCMAKE_RC_COMPILER="%RC_EXE%" ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DGGML_CUDA=ON ^
             -DGGML_CUDA_ARCHITECTURES="120" ^
@@ -67,15 +69,12 @@ jobs:
             -DGGML_NATIVE=OFF ^
             -DGGML_CUDA_F16=ON ^
             -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 ^
-            -DCMAKE_EXE_LINKER_FLAGS="/machine:x64 /NODEFAULTLIB:libcmt.lib" ^
-            -DCMAKE_C_FLAGS="/MT /O2 /Ob2 /DNDEBUG" ^
-            -DCMAKE_CXX_FLAGS="/MT /O2 /Ob2 /DNDEBUG"
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
       # 5. 编译
       - name: Build
         shell: cmd
         run: |
-          REM 剔除 MinGW 干扰
           set "PATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC;%PATH%"
           set "PATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\IDE;%PATH%"
           set "PATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools;%PATH%"
@@ -101,12 +100,10 @@ jobs:
           copy build\bin\ggml-cuda.dll dist\
           copy build\bin\mtmd.dll dist\
 
-          REM 拷贝 CUDA 运行时 DLL
           copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin\cudart64_12.dll" dist\
           copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin\cublas64_12.dll" dist\
           copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin\cublasLt64_12.dll" dist\
 
-          REM 拷贝 MSVC 运行时
           FOR /F "usebackq tokens=*" %%i IN (`vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) DO SET "VS_PATH=%%i"
           SET "MSVC_PATH=%VS_PATH%\VC\Tools\MSVC"
           FOR /F "tokens=*" %%i IN ('DIR /B /AD /O-N "%MSVC_PATH%"') DO SET "MSVC_VERSION=%%i"

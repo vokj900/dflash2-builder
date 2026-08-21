@@ -8,15 +8,6 @@ on:
         required: true
         default: 'v1.0.0'
         type: string
-      cuda_version:
-        description: 'CUDA 版本（如 12.8.1）'
-        required: false
-        default: '12.8.1'
-        type: string
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   GH_TOKEN: ${{ github.token }}
@@ -25,15 +16,14 @@ jobs:
   build:
     runs-on: windows-2022
     permissions:
-      actions: write
       contents: write
-
+      actions: write
     steps:
-      # 0. 安装 CUDA Toolkit
-      - name: Install CUDA Toolkit ${{ inputs.cuda_version }}
+      # 0. 安装 CUDA 12.8.1
+      - name: Install CUDA Toolkit 12.8.1
         uses: Jimver/cuda-toolkit@v0.2.36
         with:
-          cuda: ${{ inputs.cuda_version }}
+          cuda: '12.8.1'
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
@@ -46,8 +36,8 @@ jobs:
           submodules: recursive
           path: src
 
-      # 2. 编译
-      - name: Build llama-server (Windows + CUDA 12.8 + sm_120 + DFlash2/MTP)
+      # 2. 编译（完全复制你成功工作流的步骤，一个字不改）
+      - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
         shell: cmd
         run: |
           echo ================================================================
@@ -73,3 +63,15 @@ jobs:
           set "PATH=%PATH:C:\msys64\mingw64\bin=%"
           set "PATH=%PATH:C:\msys64\ucrt64\bin;=%"
           set "PATH=%PATH:;C:\msys64\ucrt64\bin=%"
+          set "PATH=%PATH:C:\msys64\ucrt64\bin=%"
+          where cc.exe && (
+            for %%i in (cc.exe gcc.exe g++.exe) do (
+              for /f "delims=" %%j in ('where %%i 2^>nul') do del /f /q "%%j" || echo 删除 %%j 失败
+            )
+          ) || echo ✅ cc.exe 已在 PATH 中消失
+          where cc.exe && (echo ❌ cc.exe 仍存在 && exit /b 1) || echo ✅ MinGW 屏蔽成功
+
+          echo ================================================================
+          echo [3/6] 安装依赖 + 验证 CUDA
+          echo ================================================================
+          echo

@@ -27,17 +27,25 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
-      # 1. 检出 ggml-org/llama.cpp @ 5ecbe1ac1（PR #27342 验证过的 DFlash2 提交）
-      - name: Checkout ggml-org/llama.cpp @ 5ecbe1ac1
+      # 1a. 拉 PR #27342 head，fetch-depth:0 保证 5ecbe1ac1 在历史里
+      - name: Checkout ggml-org/llama.cpp PR #27342 head
         uses: actions/checkout@v4
         with:
           repository: ggml-org/llama.cpp
-          ref: 5ecbe1ac1
+          ref: refs/pull/27342/head
           fetch-depth: 0
           submodules: recursive
           path: src
 
-      # 2. 编译（照搬你成功工作流的思路）
+      # 1b. 切到验证过的 commit 5ecbe1ac1
+      - name: Pin to commit 5ecbe1ac1
+        shell: cmd
+        run: |
+          cd src
+          git checkout 5ecbe1ac1
+          git log -1 --oneline
+
+      # 2. 编译（和你上一份逐字一致）
       - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
         shell: cmd
         run: |

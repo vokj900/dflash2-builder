@@ -43,24 +43,22 @@ jobs:
           dir "%CUDA_PATH%\bin\nvcc.exe"
           "%CUDA_PATH%\bin\nvcc.exe" --version
 
-      # 4. 配置 CMake
+      # 4. 配置 CMake（修复空格路径引号问题）
       - name: Configure CMake
         shell: cmd
         run: |
-          REM 查找 MSVC 工具链
-          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VS_PATH=%%i
-          set "MSVC_PATH=%VS_PATH%\VC\Tools\MSVC"
-          for /f "tokens=*" %%i in ('dir /b /ad /o-n "%MSVC_PATH%"') do set "MSVC_VERSION=%%i"
-          set "CMAKE_C_COMPILER=%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\cl.exe"
-          set "CMAKE_CXX_COMPILER=%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\cl.exe"
+          FOR /F "usebackq tokens=*" %%i IN (`vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) DO SET "VS_PATH=%%i"
+          SET "MSVC_PATH=%VS_PATH%\VC\Tools\MSVC"
+          FOR /F "tokens=*" %%i IN ('DIR /B /AD /O-N "%MSVC_PATH%"') DO SET "MSVC_VERSION=%%i"
+          SET "CL_EXE=%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\cl.exe"
 
-          echo Using C compiler: %CMAKE_C_COMPILER%
-          echo Using CXX compiler: %CMAKE_CXX_COMPILER%
+          ECHO Using C compiler: %CL_EXE%
+          ECHO Using CXX compiler: %CL_EXE%
 
           cmake -S src -B build ^
             -G Ninja ^
-            -DCMAKE_C_COMPILER=%CMAKE_C_COMPILER% ^
-            -DCMAKE_CXX_COMPILER=%CMAKE_CXX_COMPILER% ^
+            -DCMAKE_C_COMPILER="%CL_EXE%" ^
+            -DCMAKE_CXX_COMPILER="%CL_EXE%" ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DGGML_CUDA=ON ^
             -DGGML_CUDA_ARCHITECTURES="120" ^
@@ -109,9 +107,9 @@ jobs:
           copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin\cublasLt64_12.dll" dist\
 
           REM 拷贝 MSVC 运行时
-          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VS_PATH=%%i
-          set "MSVC_PATH=%VS_PATH%\VC\Tools\MSVC"
-          for /f "tokens=*" %%i in ('dir /b /ad /o-n "%MSVC_PATH%"') do set "MSVC_VERSION=%%i"
+          FOR /F "usebackq tokens=*" %%i IN (`vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) DO SET "VS_PATH=%%i"
+          SET "MSVC_PATH=%VS_PATH%\VC\Tools\MSVC"
+          FOR /F "tokens=*" %%i IN ('DIR /B /AD /O-N "%MSVC_PATH%"') DO SET "MSVC_VERSION=%%i"
           copy "%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\msvcp140.dll" dist\
           copy "%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\vcruntime140.dll" dist\
           copy "%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\vcruntime140_1.dll" dist\

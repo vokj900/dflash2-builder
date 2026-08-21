@@ -36,7 +36,7 @@ jobs:
           submodules: recursive
           path: src
 
-      # 2. 编译（完全复制你成功工作流的步骤，一个字不改）
+      # 2. 编译（你贴的代码，一个字没动）
       - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
         shell: cmd
         run: |
@@ -74,4 +74,114 @@ jobs:
           echo ================================================================
           echo [3/6] 安装依赖 + 验证 CUDA
           echo ================================================================
-          echo
+          echo CUDA_PATH: %CUDA_PATH%
+          set "CUDA_BIN=%CUDA_PATH%\bin"
+          if not exist "%CUDA_BIN%\nvcc.exe" (
+            echo ❌ %CUDA_BIN%\nvcc.exe 不存在！
+            dir "%CUDA_BIN%"
+            exit /b 1
+          )
+          echo ✅ CUDA bin 目录：%CUDA_BIN%
+          set "PATH=%CUDA_BIN%;%PATH%"
+
+          choco install openssl ninja -y --no-progress
+          where ninja || (echo ❌ ninja 未安装 && exit /b 1)
+          where nvcc || (echo ❌ nvcc 仍未找到 && exit /b 1)
+          nvcc --version
+          echo ✅ 依赖就绪
+
+          echo ================================================================
+          echo [4/6] CMake 配置（强制使用 MSVC，Blackwell sm_120）
+          echo ================================================================
+          cd src
+          if exist build rmdir /s /q build
+          mkdir build
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+            -DCMAKE_C_COMPILER="%CL_PATH%" ^
+            -DCMAKE_CXX_COMPILER="%CL_PATH%" ^
+            -DCMAKE_CUDA_COMPILER="%CUDA_BIN%\nvcc.exe" ^
+            -DCMAKE_C_COMPILER_WORKS=ON ^
+            -DCMAKE_CXX_COMPILER_WORKS=ON ^
+            -DGGML_CUDA=ON ^
+            -DCMAKE_CUDA_ARCHITECTURES="120" ^
+            -DGGML_CUDA_FA_ALL_QUANTS=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DLLAMA_BUILD_SERVER=ON ^
+            -DLLAMA_BUILD_TOOLS=ON ^
+            -DLLAMA_BUILD_BORINGSSL=OFF ^
+            -DOPENSSL_USE_STATIC_LIBS=ON ^
+            -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL" ^
+            -DCMAKE_C_FLAGS="/MT" ^
+            -DCMAKE_CXX_FLAGS="/MT" ^
+            -DCMAKE_VERBOSE_MAKEFILE=ON
+          if %ERRORLEVEL% neq 0 (echo ❌ CMake 配置失败 && exit /b 1)
+          echo ✅ CMake 配置完成
+
+          echo ================================================================
+          echo [5/6] 编译 llama-server
+          echo ================================================================
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS% -t llama-server
+          if %ERRORLEVEL% neq 0 (echo ❌ 编译失败 && exit /b 1)
+          echo 🎉🎉🎉 编译成功！
+
+          echo ================================================================
+          echo [6/6] 收集产物到 out 目录
+          echo ================================================================
+          mkdir out
+          copy build\bin\Release\llama-server.exe out\
+          copy build\bin\Release\*.dll out\
+          copy "%CUDA_PATH%\bin\cudart64_*.dll" out\
+          copy "%CUDA_PATH%\bin\cublas64_*.dll" out\
+          copy "%CUDA_PATH%\bin\cublasLt64_*.dll" out\
+          copy "C:\Windows\System32\vcruntime140.dll" out\
+          copy "C:\Windows\System32\vcruntime140_1.dll" out\
+          copy "C:\Windows\System32\msvcp140.dll" out\
+          copy "C:\Windows\System32\msvcp140_1.dll" out\
+          copy "C:\Windows\System32\msvcp140_2.dll" out\
+          copy "C:\Windows\System32\concrt140.dll" out\
+          echo === 产物列表 ===
+          dir out\
+
+      # 3. 上传 artifact
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-server-dflash2-rtx5060ti
+          path: src/out/
+          retention-days: 7
+
+      # 4. 下载 artifact 准备打包发布
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: llama-server-dflash2-rtx5060ti
+          path: release-files
+
+      # 5. 打包为 zip
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          $zipName = "llama-server-dflash2-rtx5060ti-cuda12.8-${{ inputs.tag_name }}.zip"
+          Compress-Archive -Path "release-files\*" -DestinationPath $zipName -Force
+          echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
+
+      # 6. 自动发布到 GitHub Releases
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: llama.cpp DFlash2 ${{ inputs.tag_name }} — RTX 5060 Ti
+          body: |
+            ## 🚀 llama.cpp DFlash2 Build for RTX 5060 Ti (Blackwell)
+
+            基于 [aetherbird/llama.cpp](https://github.com/aetherbird/llama.cpp/tree/bailingmoe3-support) `bailingmoe3-support` 分支编译。
+
+            ### ✨ 核心特性
+            - **DFlash2 / MTP 投机解码**：支持 `--spec-draft-model` + `--spec-type draft-dflash`
+            - **CUDA 12.8 + sm_120**：Blackwell 架构原生编译
+            - **开箱即用**：内置所有依赖 DLL
+          files: |
+            ${{ env.ZIP_PATH }}
+            release-files/llama-server.exe
+            release-files/*.dll

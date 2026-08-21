@@ -1,4 +1,4 @@
-name: Build llama.cpp (PR #27342 - DFlash2 for RTX 5060 Ti)
+name: Build llama.cpp DFlash2 for RTX 5060 Ti
 
 on:
   workflow_dispatch:
@@ -8,14 +8,22 @@ jobs:
     runs-on: windows-2022
 
     steps:
-      # 1. 检出代码 —— 锁死到社区验证通过的 commit 5ecbe1ac1
-      - name: Checkout llama.cpp PR #27342 (locked to verified commit)
+      # 1a. 检出 PR #27342 head
+      - name: Checkout llama.cpp PR #27342
         uses: actions/checkout@v4
         with:
           repository: ggml-org/llama.cpp
-          ref: 5ecbe1ac1
+          ref: refs/pull/27342/head
           submodules: recursive
           path: src
+
+      # 1b. 切到社区验证通过的 commit 5ecbe1ac1
+      - name: Checkout verified commit 5ecbe1ac1
+        shell: cmd
+        run: |
+          cd src
+          git fetch origin 5ecbe1ac1
+          git checkout 5ecbe1ac1
 
       # 2. 安装 CUDA 12.8.1
       - name: Setup CUDA
@@ -35,7 +43,7 @@ jobs:
           dir "%CUDA_PATH%\bin\nvcc.exe"
           "%CUDA_PATH%\bin\nvcc.exe" --version
 
-      # 4. 配置 CMake（完全复制你成功编译 Ling-3.0-tiny 的参数）
+      # 4. 配置 CMake
       - name: Configure CMake
         shell: cmd
         run: |
@@ -111,7 +119,7 @@ jobs:
           copy "%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\msvcp140_2.dll" dist\
           copy "%MSVC_PATH%\%MSVC_VERSION%\bin\Hostx64\x64\concrt140.dll" dist\
 
-      # 7. 上传构建产物（供下载）
+      # 7. 上传构建产物
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -124,7 +132,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: dflash2-${{ github.run_number }}
-          name: llama-server DFlash2 (PR #27342, commit 5ecbe1ac1)
+          name: llama-server DFlash2 (commit 5ecbe1ac1)
           body: |
             llama-server.exe built from ggml-org/llama.cpp PR #27342 (commit 5ecbe1ac1)
             - CUDA 12.8.1, sm_120 (RTX 5060 Ti / Blackwell)

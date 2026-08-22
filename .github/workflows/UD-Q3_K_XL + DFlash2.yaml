@@ -1,4 +1,4 @@
-name: Build llama.cpp DFlash2 for RTX 5060 Ti
+name: Build llama.cpp UD-Q3_K_XL + DFlash2
 
 on:
   workflow_dispatch:

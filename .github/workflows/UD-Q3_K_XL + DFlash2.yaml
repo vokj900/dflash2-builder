@@ -1,0 +1,297 @@
+name: Build llama.cpp DFlash2 for RTX 5060 Ti (UD-Q3_K_XL + DFlash2)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release 版本号（如 v1.0.0）'
+        required: true
+        default: 'v1.0.0'
+        type: string
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    runs-on: windows-2022
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      # 0. 安装 CUDA 12.8.1
+      - name: Install CUDA Toolkit 12.8.1
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: '12.8.1'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
+
+      # 1a. 拉 PR #27342 head，fetch-depth:0 保证 5ecbe1ac1 在历史里
+      - name: Checkout ggml-org/llama.cpp PR #27342 head
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: refs/pull/27342/head
+          fetch-depth: 0
+          submodules: recursive
+          path: src
+
+      # 1b. 切到验证过的 commit 5ecbe1ac1（社区一致锚定的 DFlash2 稳定点）
+      - name: Pin to commit 5ecbe1ac1
+        shell: cmd
+        run: |
+          cd src
+          git checkout 5ecbe1ac1
+          git log -1 --oneline
+
+      # 2. 编译（与你上一份逐字一致，未改编译逻辑）
+      - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
+        shell: cmd
+        run: |
+          echo ================================================================
+          echo [1/6] 加载 MSVC x64 环境
+          echo ================================================================
+          for /f "delims=" %%i in ('"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set "VS_PATH=%%i"
+          set "VCVARS=%VS_PATH%\VC\Auxiliary\Build\vcvars64.bat"
+          if not exist "%VCVARS%" (echo ❌ 未找到 %VCVARS% && exit /b 1)
+          call "%VCVARS%"
+          if %ERRORLEVEL% neq 0 (echo ❌ MSVC 环境加载失败 && exit /b 1)
+          where cl.exe || (echo ❌ cl.exe 未加载 && exit /b 1)
+          for /f "delims=" %%i in ('where cl.exe') do set "CL_PATH=%%i"
+          echo ✅ MSVC cl.exe: %CL_PATH%
+
+          echo ================================================================
+          echo [2/6] 从 PATH 中剔除预装 MinGW
+          echo ================================================================
+          set "PATH=%PATH:C:\mingw64\bin;=%"
+          set "PATH=%PATH:;C:\mingw64\bin=%"
+          set "PATH=%PATH:C:\mingw64\bin=%"
+          set "PATH=%PATH:C:\msys64\mingw64\bin;=%"
+          set "PATH=%PATH:;C:\msys64\mingw64\bin=%"
+          set "PATH=%PATH:C:\msys64\mingw64\bin=%"
+          set "PATH=%PATH:C:\msys64\ucrt64\bin;=%"
+          set "PATH=%PATH:;C:\msys64\ucrt64\bin=%"
+          set "PATH=%PATH:C:\msys64\ucrt64\bin=%"
+          where cc.exe && (
+            for %%i in (cc.exe gcc.exe g++.exe) do (
+              for /f "delims=" %%j in ('where %%i 2^>nul') do del /f /q "%%j" || echo 删除 %%j 失败
+            )
+          ) || echo ✅ cc.exe 已在 PATH 中消失
+          where cc.exe && (echo ❌ cc.exe 仍存在 && exit /b 1) || echo ✅ MinGW 屏蔽成功
+
+          echo ================================================================
+          echo [3/6] 安装依赖 + 验证 CUDA
+          echo ================================================================
+          echo CUDA_PATH: %CUDA_PATH%
+          set "CUDA_BIN=%CUDA_PATH%\bin"
+          if not exist "%CUDA_BIN%\nvcc.exe" (
+            echo ❌ %CUDA_BIN%\nvcc.exe 不存在！
+            dir "%CUDA_BIN%"
+            exit /b 1
+          )
+          echo ✅ CUDA bin 目录：%CUDA_BIN%
+          set "PATH=%CUDA_BIN%;%PATH%"
+
+          choco install openssl ninja -y --no-progress
+          where ninja || (echo ❌ ninja 未安装 && exit /b 1)
+          where nvcc || (echo ❌ nvcc 仍未找到 && exit /b 1)
+          nvcc --version
+          echo ✅ 依赖就绪
+
+          echo ================================================================
+          echo [4/6] CMake 配置（ggml-org PR27342 @5ecbe1ac1，MSVC，Blackwell sm_120）
+          echo ================================================================
+          cd src
+          if exist build rmdir /s /q build
+          mkdir build
+          cmake -S . -B build -G "Ninja Multi-Config" ^
+            -DCMAKE_C_COMPILER="%CL_PATH%" ^
+            -DCMAKE_CXX_COMPILER="%CL_PATH%" ^
+            -DCMAKE_CUDA_COMPILER="%CUDA_BIN%\nvcc.exe" ^
+            -DCMAKE_C_COMPILER_WORKS=ON ^
+            -DCMAKE_CXX_COMPILER_WORKS=ON ^
+            -DGGML_CUDA=ON ^
+            -DCMAKE_CUDA_ARCHITECTURES="120" ^
+            -DGGML_CUDA_FA_ALL_QUANTS=ON ^
+            -DGGML_NATIVE=OFF ^
+            -DLLAMA_BUILD_SERVER=ON ^
+            -DLLAMA_BUILD_TOOLS=ON ^
+            -DLLAMA_BUILD_BORINGSSL=OFF ^
+            -DOPENSSL_USE_STATIC_LIBS=ON ^
+            -DOPENSSL_ROOT_DIR="C:\Program Files\OpenSSL" ^
+            -DCMAKE_C_FLAGS="/MT" ^
+            -DCMAKE_CXX_FLAGS="/MT" ^
+            -DCMAKE_VERBOSE_MAKEFILE=ON
+          if %ERRORLEVEL% neq 0 (echo ❌ CMake 配置失败 && exit /b 1)
+          echo ✅ CMake 配置完成
+
+          echo ================================================================
+          echo [5/6] 编译 llama-server
+          echo ================================================================
+          set /A NINJA_JOBS=%NUMBER_OF_PROCESSORS%-1
+          cmake --build build --config Release -j %NINJA_JOBS% -t llama-server
+          if %ERRORLEVEL% neq 0 (echo ❌ 编译失败 && exit /b 1)
+          echo 🎉🎉🎉 编译成功！
+
+          echo ================================================================
+          echo [6/6] 收集产物到 out 目录
+          echo ================================================================
+          mkdir out
+          copy build\bin\Release\llama-server.exe out\
+          copy build\bin\Release\*.dll out\
+          copy "%CUDA_PATH%\bin\cudart64_*.dll" out\
+          copy "%CUDA_PATH%\bin\cublas64_*.dll" out\
+          copy "%CUDA_PATH%\bin\cublasLt64_*.dll" out\
+          copy "C:\Windows\System32\vcruntime140.dll" out\
+          copy "C:\Windows\System32\vcruntime140_1.dll" out\
+          copy "C:\Windows\System32\msvcp140.dll" out\
+          copy "C:\Windows\System32\msvcp140_1.dll" out\
+          copy "C:\Windows\System32\msvcp140_2.dll" out\
+          copy "C:\Windows\System32\concrt140.dll" out\
+          echo === 产物列表 ===
+          dir out\
+
+      # 3. 上传 artifact
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-server-dflash2-rtx5060ti
+          path: src/out/
+          retention-days: 7
+
+      # 4. 下载 artifact 准备打包发布
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: llama-server-dflash2-rtx5060ti
+          path: release-files
+
+      # 5. 生成 UD+DFlash2 兼容性自检脚本（关键增量）
+      - name: Generate UD+DFlash2 compatibility self-test script
+        shell: pwsh
+        run: |
+          # 写入 check_ud_dflash.bat：一键判定 blk.64.nextn 是否被 ignore
+          $bat = '@echo off
+chcp 65001 >nul 2>&1
+echo ============================================================
+echo  UD-Q3_K_XL + DFlash2 compatibility check (PR#27342@5ecbe1ac1)
+echo ============================================================
+echo.
+echo [Purpose] Detect whether this build silently ignores
+echo           blk.64.nextn.* tensors (MTP anchor for DFlash2).
+echo           If ignored, DFlash2 acceptance will collapse to ~0.
+echo.
+echo [Usage]   Place this bat next to llama-server.exe and the two
+echo           GGUF files, then double-click.
+echo.
+echo ============================================================
+echo.
+set "EXE=llama-server.exe"
+if not exist "%EXE%" (echo ❌ %EXE% not found in current dir & pause & exit /b 1)
+if not exist "Qwen3.8-27B-UD-Q3_K_XL.gguf" (echo ⚠️  Qwen3.8-27B-UD-Q3_K_XL.gguf not found & echo     (skip UD test, or place the file here) & goto :q4test)
+if not exist "Qwen3.8-27B-DFlash2-Q4_K_M.gguf" (echo ⚠️  Draft model missing, skipping & goto :q4test)
+echo.
+echo --- Test A: UD-Q3_K_XL + DFlash2 (full GPU ngl 99) ---
+echo     (look for "blk.64.nextn.* ignoring" in the first 40 lines)
+echo.
+%EXE% -m Qwen3.8-27B-UD-Q3_K_XL.gguf -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-type draft-dflash --spec-draft-n-max 4 -ngl 99 -ngld 99 -c 1024 -t 4 --host 127.0.0.1 --port 18080 2>&1 | findstr /n "nextn ignoring draft-dflash n_max listening"
+echo.
+echo === Judgment ===
+echo   If you see "blk.64.nextn.* ignoring" above: UD+DFlash2 NOT compatible on this build.
+echo     -> Use UD-Q3_K_XL PURE (no -md) for ~28 tok/s, OR Q4_K_M + DFlash2 (~4.4 tok/s).
+echo   If NO ignore line AND you see "draft-dflash: n_max=4": UD+DFlash2 MAY work; send a chat
+echo     message and check the "draft acceptance" line (need ~0.4 to be useful).
+echo.
+:q4test
+echo.
+echo --- Test B (reference): Q4_K_M + DFlash2, known working baseline ---
+echo     (run this if you have Qwen3.8-27B-Q4_K_M.gguf + draft model)
+echo.
+if exist "Qwen3.8-27B-Q4_K_M.gguf" (
+  %EXE% -m Qwen3.8-27B-Q4_K_M.gguf -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-type draft-dflash --spec-draft-n-max 4 -ngl 40 -ngld 99 -c 1536 -t 4 --host 127.0.0.1 --port 18081 2>&1 | findstr /n "nextn ignoring draft-dflash n_max listening draft acceptance"
+) else (
+  echo   Qwen3.8-27B-Q4_K_M.gguf not present, skipping reference test.
+)
+echo.
+echo Done. See README in Release for interpretation.
+pause
+'
+          Set-Content -Path "release-files\check_ud_dflash.bat" -Value $bat -Encoding ASCII
+          # 写入推荐启动脚本（三个已验证档位）
+          $start = '@echo off
+chcp 65001 >nul 2>&1
+title Qwen3.8-27B Launcher
+echo ============================================================
+echo  1) UD-Q3_K_XL PURE (ngl 99, c8192) ~28 tok/s, no DFlash2
+echo  2) Q4_K_M + DFlash2  (ngl 40, c1536) ~4.4 tok/s [verified]
+echo  3) Q4_K_M + DFlash2  (ngl 35, c16384) ~3.6 tok/s long ctx
+echo  Q) Quit
+echo ============================================================
+set /p c=Choose [1/2/3/Q]:
+if /i "%c%"=="1" goto u
+if /i "%c%"=="2" goto q
+if /i "%c%"=="3" goto l
+goto :eof
+:u
+llama-server.exe -m Qwen3.8-27B-UD-Q3_K_XL.gguf -ngl 99 -c 8192 -ctk q8_0 -ctv q8_0 -t 4 --host 0.0.0.0 --port 8080
+goto :eof
+:q
+llama-server.exe -m Qwen3.8-27B-Q4_K_M.gguf -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-type draft-dflash --spec-draft-n-max 4 -ngl 40 -ngld 99 -c 1536 -t 4 --host 0.0.0.0 --port 8080
+goto :eof
+:l
+llama-server.exe -m Qwen3.8-27B-Q4_K_M.gguf -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-type draft-dflash --spec-draft-n-max 4 -ngl 35 -ngld 99 -c 16384 -ctk q4_0 -ctv q4_0 -t 4 --host 0.0.0.0 --port 8080
+goto :eof
+'
+          Set-Content -Path "release-files\start.bat" -Value $start -Encoding ASCII
+          echo "Wrote check_ud_dflash.bat and start.bat"
+
+      # 6. 打包为 zip
+      - name: Package release zip
+        shell: pwsh
+        run: |
+          $zipName = "llama-server-dflash2-rtx5060ti-cuda12.8-${{ inputs.tag_name }}.zip"
+          Compress-Archive -Path "release-files\*" -DestinationPath $zipName -Force
+          echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
+
+      # 7. 自动发布到 GitHub Releases
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: llama.cpp DFlash2 ${{ inputs.tag_name }} — RTX 5060 Ti (UD + Q4)
+          body: |
+            ## 🚀 llama.cpp DFlash2 Build for RTX 5060 Ti (Blackwell sm_120)
+
+            基于 ggml-org/llama.cpp **PR #27342 @ commit 5ecbe1ac1**（`support DFlash2`，截至 2026-08-21 社区一致锚定的稳定点）。
+
+            ### ✨ 核心特性
+            - **DFlash2 投机解码**：`--spec-type draft-dflash`（官方推荐 `--spec-draft-n-max 7~8`）
+            - **CUDA 12.8 + sm_120**：Blackwell 架构原生编译，开箱即用（含全部依赖 DLL）
+            - **附带 `start.bat`**：一键切换 3 个已验证档位；`check_ud_dflash.bat` 自动判定 UD 主模型 + DFlash2 兼容性
+
+            ### 📦 模型文件（需自行下载，放入 exe 同目录）
+            | 用途 | 推荐文件 | 来源 |
+            |------|---------|------|
+            | 主模型（兼得快+投机） | `Qwen3.8-27B-Q4_K_M.gguf` (~18.97 GB) | `ggml-org/Qwen3.8-27B-GGUF` |
+            | 主模型（纯模型最快） | `Qwen3.8-27B-UD-Q3_K_XL.gguf` (~13.4 GB) | `unsloth/Qwen3.8-27B-GGUF` |
+            | 草稿模型（DFlash2） | `Qwen3.8-27B-DFlash2-Q4_K_M.gguf` (~1.06 GB) | `incoai/Qwen3.8-27B-DFlash2-GGUF` |
+
+            ### ⚠️ 重要兼容提示（来自社区实测）
+            - **`UD-Q3_K_XL` 主模型 + DFlash2 投机**：本 build（`5ecbe1ac1`）加载 UD 动态量化时会把 `blk.64.nextn.*`（MTP/DFlash2 anchor）标记为 unused 并忽略，导致 DFlash2 接受率趋近 0。**此为 PR #27342 当前对 UD 动态量化支持未覆盖的已知限制**（参考：llama.cpp MTP/投机 + UD 量化兼容性讨论）。
+              - ✅ **验证方法**：运行附带的 `check_ud_dflash.bat`，若日志出现 `blk.64.nextn.* ignoring`，则 UD+DFlash2 在当前 build 不可用。
+              - ✅ **替代方案 A（要速度）**：用 `start.bat` 选 1，`UD-Q3_K_XL` 纯模型 `-ngl 99`，约 **28 tok/s**（无投机，但全 GPU）。
+              - ✅ **替代方案 B（要 DFlash2 投机）**：用 `start.bat` 选 2，`Q4_K_M` + DFlash2 `-ngl 40`，约 **4.4 tok/s**、acceptance ~45-50%（社区验证的稳定组合）。
+            - **`Q4_K_M` 主模型 + DFlash2**：本 build 完全支持，是你这台 16GB 卡跑 DFlash2 的推荐组合。
+            - 主模型量化建议与草稿匹配，**优先官方 Q4_K_M 级别**（参考 incoai DFlash2 官方指引与社区实测）。
+
+            ### 🔗 参考
+            - DFlash2 官方（incoai / Z-Lab）：https://huggingface.co/incoai/Qwen3.8-27B-DFlash2-GGUF
+            - llama.cpp DFlash2 支持：PR #27342
+            - 社区实测：UD 动态量化在 llama.cpp 投机/MTP 路径存在兼容性问题的讨论
+          files: |
+            ${{ env.ZIP_PATH }}
+            release-files/llama-server.exe
+            release-files/*.dll
+            release-files/check_ud_dflash.bat
+            release-files/start.bat

@@ -26,7 +26,7 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev"]'
 
-      - name: Checkout ggml-org/llama.cpp PR #27342 head
+      - name: Checkout ggml-org/llama.cpp PR #27342 HEAD (no commit pin)
         uses: actions/checkout@v4
         with:
           repository: ggml-org/llama.cpp
@@ -35,11 +35,10 @@ jobs:
           submodules: recursive
           path: src
 
-      - name: Pin to commit 5ecbe1ac1
+      - name: Show PR HEAD commit
         shell: cmd
         run: |
           cd src
-          git checkout 5ecbe1ac1
           git log -1 --oneline
 
       - name: Build llama-server (Windows + CUDA 12.8 + sm_120)
@@ -94,7 +93,7 @@ jobs:
           nvcc --version
 
           echo ================================================================
-          echo [4/6] CMake configure
+          echo [4/6] CMake configure (PR #27342 HEAD, sm_120)
           echo ================================================================
           cd src
           if exist build rmdir /s /q build
@@ -157,7 +156,7 @@ jobs:
           name: llama-server-dflash2-rtx5060ti
           path: release-files
 
-      - name: Generate helper scripts
+      - name: Generate helper scripts (start.bat + check_ud_dflash.bat)
         shell: pwsh
         run: |
           $checkBat = '@echo off
@@ -165,22 +164,24 @@ jobs:
           echo ============================================================
           echo  UD-Q3_K_XL + DFlash2 compatibility check
           echo ============================================================
-          echo  This script checks if blk.64.nextn.* is ignored at startup.
-          echo  If ignored, DFlash2 acceptance will be ~0 on this build.
+          echo  Checks whether blk.64.nextn.* (MTP anchor for DFlash2)
+          echo  is silently ignored when loading UD dynamic quant.
+          echo  If ignored, DFlash2 acceptance collapses to ~0.
           echo.
           set "EXE=llama-server.exe"
-          if not exist "%EXE%" (echo ERROR: %EXE% not found & pause & exit /b 1)
-          if not exist "Qwen3.8-27B-UD-Q3_K_XL.gguf" (echo WARNING: UD model not found, skipping test & goto :q4)
+          if not exist "%EXE%" (echo ERROR: %EXE% not found in this folder & pause & exit /b 1)
+          if not exist "Qwen3.8-27B-UD-Q3_K_XL.gguf" (echo WARNING: UD model not found, skipping UD test & goto :q4)
           if not exist "Qwen3.8-27B-DFlash2-Q4_K_M.gguf" (echo WARNING: Draft model not found & goto :q4)
-          echo --- Test A: UD-Q3_K_XL + DFlash2 ---
+          echo --- Test A: UD-Q3_K_XL + DFlash2 (ngl 99) ---
           %EXE% -m Qwen3.8-27B-UD-Q3_K_XL.gguf -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-type draft-dflash --spec-draft-n-max 4 -ngl 99 -ngld 99 -c 1024 -t 4 --host 127.0.0.1 --port 18080 2>&1 | findstr /n "nextn ignoring draft-dflash n_max listening"
           echo.
-          echo RESULT: If you see "blk.64.nextn.* ignoring" above, UD+DFlash2 is NOT compatible on this build.
-          echo   Workaround 1: Use UD-Q3_K_XL pure (no -md) for ~28 tok/s
-          echo   Workaround 2: Use Q4_K_M + DFlash2 for ~4.4 tok/s (run start.bat option 2)
+          echo RESULT: If "blk.64.nextn.* ignoring" appears above, UD+DFlash2 is NOT supported by this build.
+          echo   Workaround 1: UD-Q3_K_XL pure (no -md) for ~28 tok/s
+          echo   Workaround 2: Q4_K_M + DFlash2 for ~4.4 tok/s (start.bat option 2)
+          echo   If NO ignore line AND "draft-dflash: n_max=4" shown, send a chat msg and check "draft acceptance" (useful if ~0.4+).
           echo.
           :q4
-          echo --- Test B: Q4_K_M + DFlash2 (known working) ---
+          echo --- Test B: Q4_K_M + DFlash2 (known working baseline) ---
           if exist "Qwen3.8-27B-Q4_K_M.gguf" (
             %EXE% -m Qwen3.8-27B-Q4_K_M.gguf -md Qwen3.8-27B-DFlash2-Q4_K_M.gguf --spec-type draft-dflash --spec-draft-n-max 4 -ngl 40 -ngld 99 -c 1536 -t 4 --host 127.0.0.1 --port 18081 2>&1 | findstr /n "nextn ignoring draft-dflash n_max listening"
           ) else (
@@ -213,7 +214,7 @@ jobs:
           goto :eof
           '
           Set-Content -Path "release-files\start.bat" -Value $startBat -Encoding ASCII
-          echo Done writing helper scripts.
+          echo Helper scripts written.
 
       - name: Package release zip
         shell: pwsh
@@ -230,22 +231,20 @@ jobs:
           body: |
             llama.cpp DFlash2 build for RTX 5060 Ti (Blackwell sm_120, CUDA 12.8)
 
-            Base: ggml-org/llama.cpp PR #27342 @ commit 5ecbe1ac1 (support DFlash2)
+            Base: ggml-org/llama.cpp PR #27342 HEAD (no commit pin; built against latest PR HEAD at release time)
 
             Features:
             - DFlash2 speculative decoding via --spec-type draft-dflash
             - CUDA 12.8 + sm_120 native, all DLLs included
             - Includes start.bat (3 presets) and check_ud_dflash.bat
 
-            Model files needed (place in same dir as exe):
-            - Qwen3.8-27B-Q4_K_M.gguf from ggml-org/Qwen3.8-27B-GGUF
-            - Qwen3.8-27B-UD-Q3_K_XL.gguf from unsloth/Qwen3.8-27B-GGUF
-            - Qwen3.8-27B-DFlash2-Q4_K_M.gguf from incoai/Qwen3.8-27B-DFlash2-GGUF
+            Models needed (place next to exe):
+            - Qwen3.8-27B-Q4_K_M.gguf  (ggml-org/Qwen3.8-27B-GGUF) [recommended for DFlash2]
+            - Qwen3.8-27B-UD-Q3_K_XL.gguf (unsloth/Qwen3.8-27B-GGUF) [target for UD+DFlash2 test]
+            - Qwen3.8-27B-DFlash2-Q4_K_M.gguf (incoai/Qwen3.8-27B-DFlash2-GGUF)
 
-            Known limitation:
-            UD-Q3_K_XL + DFlash2: this build ignores blk.64.nextn.* tensors (MTP anchor) when loading UD dynamic quant. DFlash2 acceptance collapses to ~0. Run check_ud_dflash.bat to confirm. Workarounds: use UD-Q3_K_XL pure (no -md, ~28 tok/s) or Q4_K_M + DFlash2 (~4.4 tok/s).
-
-            Q4_K_M + DFlash2: fully supported, recommended for 16GB cards.
+            Compatibility note:
+            Run check_ud_dflash.bat after extracting. If startup logs show "blk.64.nextn.* ignoring", this PR HEAD build does not support UD-Q3_K_XL + DFlash2 (MTP anchor dropped); use UD-Q3_K_XL pure (~28 tok/s) or Q4_K_M + DFlash2 (~4.4 tok/s). If no ignore line appears and "draft-dflash: n_max=4" is shown, send a message and check "draft acceptance" in the timing log (useful if ~0.4+).
           files: |
             ${{ env.ZIP_PATH }}
             release-files/llama-server.exe
